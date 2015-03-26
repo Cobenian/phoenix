@@ -22,9 +22,10 @@ defmodule Phoenix.Transports.LongPoller.Server do
   alias Phoenix.Socket.Message
   alias Phoenix.Channel.Transport
   alias Phoenix.Transports.LongPoller
+  alias Phoenix.PubSub
 
   @doc """
-  Starts the Server
+  Starts the Server.
 
     * `router` - The router module, ie. `MyApp.Router`
     * `window_ms` - The longpoll session timeout, in milliseconds
@@ -32,24 +33,29 @@ defmodule Phoenix.Transports.LongPoller.Server do
   If the server receives no message within `window_ms`, it terminates and
   clients are responsible for opening a new session.
   """
-  def start_link(router, window_ms, priv_topic, pubsub_server) do
-    GenServer.start_link(__MODULE__, [router, window_ms, priv_topic, pubsub_server])
+  def start_link(router, window_ms, priv_topic, endpoint) do
+    GenServer.start_link(__MODULE__, [router, window_ms, priv_topic, endpoint])
   end
 
   @doc false
-  def init([router, window_ms, priv_topic, pubsub_server]) do
+  def init([router, window_ms, priv_topic, endpoint]) do
     Process.flag(:trap_exit, true)
 
     state = %{buffer: [],
               router: router,
               sockets: HashDict.new,
-              window_ms: window_ms * 2,
-              pubsub_server: pubsub_server,
+              sockets_inverse: HashDict.new,
+              window_ms: trunc(window_ms * 1.5),
+              endpoint: endpoint,
+              pubsub_server: Process.whereis(endpoint.__pubsub_server__()),
               priv_topic: priv_topic,
+              last_client_poll: now_ms(),
               client_ref: nil}
 
-    :ok = Phoenix.PubSub.subscribe(state.pubsub_server, self, state.priv_topic, link: true)
-    {:ok, state, state.window_ms}
+    :ok = PubSub.subscribe(state.pubsub_server, self, state.priv_topic, link: true)
+    :timer.send_interval(state.window_ms, :shutdown_if_inactive)
+
+    {:ok, state}
   end
 
   @doc """
@@ -58,51 +64,76 @@ defmodule Phoenix.Transports.LongPoller.Server do
   def handle_call(:stop, _from, state), do: {:stop, :shutdown, :ok, state}
 
   @doc """
-  Dispatches client `%Phoenix.Socket.Messages{}` back through Transport layer
+  Dispatches client `%Phoenix.Socket.Messages{}` back through Transport layer.
   """
-  def handle_info({:dispatch, message, ref}, state) do
-    message
-    |> Transport.dispatch(state.sockets, self, state.router, state.pubsub_server, LongPoller)
+  def handle_info({:dispatch, msg, ref}, state) do
+    msg
+    |> Transport.dispatch(state.sockets, self, state.router, state.endpoint, LongPoller)
     |> case do
-      {:ok, sockets} ->
+      {:ok, socket_pid} ->
         :ok = broadcast_from(state, {:ok, :dispatch, ref})
-        {:noreply, %{state | sockets: sockets}, state.window_ms}
-      {:error, reason, sockets} ->
+
+        new_state = %{state | sockets: HashDict.put(state.sockets, msg.topic, socket_pid),
+                              sockets_inverse: HashDict.put(state.sockets_inverse, socket_pid, msg.topic)}
+        {:noreply, new_state}
+      :ok ->
+        :ok = broadcast_from(state, {:ok, :dispatch, ref})
+        {:noreply, state}
+      {:error, reason} ->
         :ok = broadcast_from(state, {:error, :dispatch, reason, ref})
-        {:noreply, %{state | sockets: sockets}, state.window_ms}
+        {:noreply, state}
+      :ignore ->
+        :ok = broadcast_from(state, {:error, :dispatch, :ignore, ref})
+        {:noreply, state}
     end
   end
 
   @doc """
-  Forwards replied/broadcasted `%Phoenix.Socket.Message{}`s from Channels back to client
+  Forwards replied/broadcasted `%Phoenix.Socket.Message{}`s from Channels back to client.
   """
-  def handle_info({:socket_reply, message = %Message{}}, state) do
-    buffer = [message | state.buffer]
-    if state.client_ref do
-      :ok = broadcast_from(state, {:messages, Enum.reverse(buffer), state.client_ref})
-    end
-    {:noreply, %{state | buffer: buffer}, state.window_ms}
+  def handle_info({:socket_push, msg}, state) do
+    publish_reply(msg, state)
   end
-  def handle_info({:socket_broadcast, message = %Message{}}, %{sockets: sockets} = state) do
-    sockets = case Transport.dispatch_broadcast(sockets, message) do
-      {:ok, socks} -> socks
-      {:error, _reason, socks} -> socks
-    end
 
-    {:noreply, %{state | sockets: sockets}, state.window_ms}
+  @doc """
+  Crash if pubsub adapter goes down
+  """
+  def handle_info({:EXIT, pub_pid, :shutdown}, %{pubsub_server: pub_pid} = state) do
+    {:stop, :pubsub_server_terminated, state}
+  end
+
+  @doc """
+  Trap channel process exits and notify client of close or error events
+
+  `:normal` exits indicate the channel shutdown gracefully from a `{:leave, socket}`
+   return. Any other exit reason is treated as an error.
+  """
+  def handle_info({:EXIT, socket_pid, reason}, state) do
+    case HashDict.get(state.sockets_inverse, socket_pid) do
+      nil   -> {:noreply, state}
+      topic ->
+        new_state = %{state | sockets: HashDict.delete(state.sockets, topic),
+                              sockets_inverse: HashDict.delete(state.sockets_inverse, socket_pid)}
+        case reason do
+          :normal ->
+            publish_reply(%Message{topic: topic, event: "chan:close", payload: %{}}, new_state)
+          _other ->
+            publish_reply(%Message{topic: topic, event: "chan:error", payload: %{}}, new_state)
+        end
+    end
   end
 
   def handle_info({:subscribe, ref}, state) do
     :ok = broadcast_from(state, {:ok, :subscribe, ref})
 
-    {:noreply, state, state.window_ms}
+    {:noreply, state}
   end
 
   def handle_info({:flush, ref}, state) do
     if Enum.any?(state.buffer) do
       :ok = broadcast_from(state, {:messages, Enum.reverse(state.buffer), ref})
     end
-    {:noreply, %{state | client_ref: ref}, state.window_ms}
+    {:noreply, %{state | client_ref: ref, last_client_poll: now_ms()}}
   end
 
   # TODO: %Messages{}'s need unique ids so we can properly ack them
@@ -115,27 +146,35 @@ defmodule Phoenix.Transports.LongPoller.Server do
     buffer = Enum.drop(state.buffer, -msg_count)
     :ok = broadcast_from(state, {:ok, :ack, ref})
 
-    {:noreply, %{state | buffer: buffer}, state.window_ms}
+    {:noreply, %{state | buffer: buffer}}
   end
 
-
-  def handle_info(:timeout, state) do
-    {:stop, :normal, state}
+  def handle_info(:shutdown_if_inactive, state) do
+    if now_ms() - state.last_client_poll > state.window_ms do
+      {:stop, :normal, state}
+    else
+      {:noreply, state}
+    end
   end
 
-  def handle_info({:EXIT, _pubsub_server, :shutdown}, state) do
-    {:stop, :pubsub_server_terminated, state}
-  end
-
-  @doc """
-  Handles forwarding arbitrary Elixir messages back to listening client
-  """
-  def terminate(reason, state) do
-    :ok = Transport.dispatch_leave(state.sockets, reason)
+  def terminate(_reason, _state) do
     :ok
   end
 
   defp broadcast_from(state, msg) do
-    Phoenix.PubSub.broadcast_from(state.pubsub_server, self, state.priv_topic, msg)
+    PubSub.broadcast_from(state.pubsub_server, self, state.priv_topic, msg)
   end
+
+  defp publish_reply(msg, state) do
+    buffer = [msg | state.buffer]
+    if state.client_ref do
+      :ok = broadcast_from(state, {:messages, Enum.reverse(buffer), state.client_ref})
+    end
+
+    {:noreply, %{state | buffer: buffer}}
+  end
+
+  defp time_to_ms({mega, sec, micro}),
+    do: ((((mega * 1000000) + sec) * 1000000) + micro) / 1000 |> trunc()
+  defp now_ms, do: :os.timestamp() |> time_to_ms()
 end

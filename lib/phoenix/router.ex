@@ -31,6 +31,11 @@ defmodule Phoenix.Router do
   The `get/3` macro above accepts a request of format "/pages/VALUE" and
   dispatches it to the show action in the `PageController`.
 
+  Routes can also match glob-like patterns, routing any path with a common
+  base to the same controller. For example:
+
+      get "/dynamic*anything", DynamicController, :show
+
   Phoenix's router is extremely efficient, as it relies on Elixir
   pattern matching for matching routes and serving requests.
 
@@ -116,7 +121,7 @@ defmodule Phoenix.Router do
 
   ## Pipelines and plugs
 
-  Once a request arrives to the Phoenix router, it performs
+  Once a request arrives at the Phoenix router, it performs
   a series of transformations through pipelines until the
   request is dispatched to a desired end-point.
 
@@ -131,7 +136,7 @@ defmodule Phoenix.Router do
 
         pipeline :browser do
           plug :fetch_session
-          plug :accepts, ~w(html json)
+          plug :accepts, ["html"]
         end
 
         scope "/" do
@@ -153,7 +158,7 @@ defmodule Phoenix.Router do
   Channels allow you to route pubsub events to channel handlers in your application.
   By default, Phoenix supports both WebSocket and LongPoller transports.
   See the `Phoenix.Channel.Transport` documentation for more information on writing
-  your own transports. Chanenls are defined with a `socket` mount, ie:
+  your own transports. Channels are defined with a `socket` mount, ie:
 
       defmodule MyApp.Router do
         use Phoenix.Router
@@ -290,7 +295,12 @@ defmodule Phoenix.Router do
       end
 
       defp dispatch(conn, []) do
-        conn.private.phoenix_route.(conn)
+        try do
+          conn.private.phoenix_route.(conn)
+        catch
+          kind, reason ->
+            Plug.Conn.WrapperError.reraise(conn, kind, reason)
+        end
       end
 
       defoverridable [init: 1, call: 2]
@@ -373,7 +383,14 @@ defmodule Phoenix.Router do
       quote unquote: false do
         Scope.pipeline(__MODULE__, plug)
         {conn, body} = Plug.Builder.compile(@phoenix_pipeline)
-        defp unquote(plug)(unquote(conn), _), do: unquote(body)
+        defp unquote(plug)(unquote(conn), _) do
+          try do
+            unquote(body)
+          catch
+            kind, reason ->
+              Plug.Conn.WrapperError.reraise(unquote(conn), kind, reason)
+          end
+        end
         @phoenix_pipeline nil
       end
 
@@ -674,7 +691,7 @@ defmodule Phoenix.Router do
     add_socket(mount, [alias: chan_alias], chan_block)
   end
   defmacro socket(mount, chan_alias, opts, do: chan_block) do
-    add_socket(mount, Dict.merge(opts, alias: chan_alias), chan_block)
+    add_socket(mount, Keyword.put(opts, :alias, chan_alias), chan_block)
   end
   defp add_socket(mount, opts, chan_block) do
     quote do
@@ -692,10 +709,11 @@ defmodule Phoenix.Router do
         @phoenix_socket_mount mount
         @phoenix_transports opts[:via]
         @phoenix_channel_alias opts[:alias]
-        get  @phoenix_socket_mount, Phoenix.Transports.WebSocket, :upgrade, Dict.take(opts, [:as])
-        post @phoenix_socket_mount, Phoenix.Transports.WebSocket, :upgrade
-        get  @phoenix_socket_mount <> "/poll", Phoenix.Transports.LongPoller, :poll
-        post @phoenix_socket_mount <> "/poll", Phoenix.Transports.LongPoller, :publish
+        get     @phoenix_socket_mount, Phoenix.Transports.WebSocket, :upgrade, Dict.take(opts, [:as])
+        post    @phoenix_socket_mount, Phoenix.Transports.WebSocket, :upgrade
+        options @phoenix_socket_mount <> "/poll", Phoenix.Transports.LongPoller, :options
+        get     @phoenix_socket_mount <> "/poll", Phoenix.Transports.LongPoller, :poll
+        post    @phoenix_socket_mount <> "/poll", Phoenix.Transports.LongPoller, :publish
         unquote(chan_block)
         @phoenix_socket_mount nil
         @phoenix_transports nil

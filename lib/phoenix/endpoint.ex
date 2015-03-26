@@ -8,19 +8,19 @@ defmodule Phoenix.Endpoint do
 
   Overall, an endpoint has three responsibilities:
 
-    * It provides a wrapper for starting and stopping the
-      endpoint as part of a supervision tree.
+    * to provide a wrapper for starting and stopping the
+      endpoint as part of a supervision tree;
 
-    * To define an initial plug pipeline where requests
-      are sent to.
+    * to define an initial plug pipeline where requests
+      are sent through;
 
-    * To host web specific configuration for your
+    * to host web specific configuration for your
       application.
 
   ## Endpoints
 
   An endpoint is simply a module defined with the help
-  of Phoenix.Endpoint. If you have used the phoenix.new
+  of `Phoenix.Endpoint`. If you have used the `mix phoenix.new`
   generator, an endpoint was automatically generated as
   part of your application:
 
@@ -52,98 +52,148 @@ defmodule Phoenix.Endpoint do
   and changing it at runtime has no effect. The compile-time
   configuration is mostly related to error handling.
 
-  On the other hand, runtime configuration is accessed during or
-  after your application is started and can be read through the
+  Runtime configuration, instead, is accessed during or
+  after your application is started and can be read and written through the
   `config/2` function:
 
       YourApp.Endpoint.config(:port)
       YourApp.Endpoint.config(:some_config, :default_value)
 
-  ### Compile-time
+  ### Compile-time configuration
 
-    * `:debug_errors` - when true, uses `Plug.Debugger` functionality for
-      debugging failures in the application. Recomended to be set to true
+    * `:code_reloader` - when `true`, enables code reloading functionality
+
+    * `:debug_errors` - when `true`, uses `Plug.Debugger` functionality for
+      debugging failures in the application. Recommended to be set to `true`
       only in development as it allows listing of the application source
-      code during debugging. Defaults to false.
+      code during debugging. Defaults to `false`.
 
-    * `:render_errors` - a module representing a view to render templates
-      whenever there is a failure in the application. For example, if the
-      application crashes with a 500 error during a HTML request,
-      `render("500.html", assigns)` will be called in the view given to
-      `:render_errors`. The default view is `MyApp.ErrorView`.
+    * `:render_errors` - responsible for rendering templates whenever there
+      is a failure in the application. For example, if the application crashes
+      with a 500 error during a HTML request, `render("500.html", assigns)`
+      will be called in the view given to `:render_errors`. Defaults to:
 
-  ### Runtime
+          [view: MyApp.ErrorView, format: "html"]
 
-    * `:cache_static_lookup` - when true, static assets lookup in the
-      filesystem via the `static_path` function are cached. Defaults to true.
+      The format is the default format when one was not set in the connection.
 
-    * `:http` - the configuration for the http server. Currently uses
-      cowboy and accepts all options as defined by `Plug.Adapters.Cowboy`.
-      Defaults to false.
+  ### Runtime configuration
 
-    * `:https` - the configuration for the https server. Currently uses
-      cowboy and accepts all options as defined by `Plug.Adapters.Cowboy`.
-      Defaults to false.
+    * `:root` - the root of your application for running external commands.
+      This is only required if the watchers or cde reloading functionality
+      are enabled.
+
+    * `:cache_static_lookup` - when `true`, static assets lookup in the
+      filesystem via the `static_path` function are cached. Defaults to `true`.
+
+    * `:http` - the configuration for the HTTP server. Currently uses
+      cowboy and accepts all options as defined by
+      [`Plug.Adapters.Cowboy`](http://hexdocs.pm/plug/Plug.Adapters.Cowboy.html).
+      Defaults to `false`.
+
+    * `:https` - the configuration for the HTTPS server. Currently uses
+      cowboy and accepts all options as defined by
+      [`Plug.Adapters.Cowboy`](http://hexdocs.pm/plug/Plug.Adapters.Cowboy.html).
+      Defaults to `false`.
 
     * `:secret_key_base` - a secret key used as a base to generate secrets
-      to encode cookies, session and friends. Defaults to nil as it must
+      to encode cookies, session and friends. Defaults to `nil` as it must
       be set per application.
 
-    * `:server` - when true, starts the web server when the endpoint
-      supervision tree starts. Defaults to false. The `mix phoenix.server`
-      task automatically sets this to true.
+    * `:server` - when `true`, starts the web server when the endpoint
+      supervision tree starts. Defaults to `false`. The `mix phoenix.server`
+      task automatically sets this to `true`.
 
     * `:url` - configuration for generating URLs throughout the app.
-      Accepts the `:host`, `:scheme` and `:port`. Defaults to:
+      Accepts the `:host`, `:scheme`, `:path` and `:port` options. All
+      keys except the `:path` one can be changed at runtime. Defaults to:
 
-          [host: "localhost"]
+          [host: "localhost", path: "/"]
 
-      The `:port` requires either an integer, string, or `{:system, "ENV_VAR"}`.
-      When given a tuple like `{:system, "PORT"}`, the port will be referenced
-      from `System.get_env("PORT")` at runtime as a workaround for releases where
-      environment specific information is loaded only at compile-time.
+      The `:port` options requires either an integer, string, or
+      `{:system, "ENV_VAR"}`. When given a tuple like `{:system, "PORT"}`,
+      the port will be referenced from `System.get_env("PORT")` at runtime
+      as a workaround for releases where environment specific information
+      is loaded only at compile-time.
 
-    * `:pubsub` - configuration for this Endpoint's pubsub adapter.
+    * `:watchers` - a set of watchers to run alongside your server. It
+      expects a list of tuples containing the executable and its arguments.
+      Watchers are guaranteed to run in the application directory but only
+      when the server is enabled. For example, the watcher below will run
+      the "watch" mode of the brunch build tool when the server starts.
+      You can configure it to whatever build tool or command you want:
+
+          [{"node", ["node_modules/brunch/bin/brunch", "watch"]}]
+
+    * `:live_reload` - configuration for the live reload option.
+      Configuration requires a `:paths` option which should be a list of
+      files to watch. When these files change, it will trigger a reload.
+      If you are using a tool like [pow](http://pow.cx) in development,
+      you may need to set the `:url` option appropriately.
+
+          [url: "ws://localhost:4000",
+           paths: [Path.expand("priv/static/js/phoenix.js")]]
+
+    * `:pubsub` - configuration for this endpoint's pubsub adapter.
       Configuration either requires a `:name` of the registered pubsub server
-      or a `:name`, `:adapter`, and `:options` which starts the adapter in
-      the endpoint's supervision tree. If no name is provided, the name is
-      inflected from the endpoint module. Defaults to:
+      or a `:name`, `:adapter`, and options which starts the adapter in
+      the endpoint's supervision tree. If no name is provided, the name
+      is inflected from the endpoint module. Defaults to:
 
           [adapter: Phoenix.PubSub.PG2]
 
       with advanced adapter configuration:
 
           [name: :my_pubsub, adapter: Phoenix.PubSub.Redis,
-                             options: [host: "192.168.100.1"]]
+           host: "192.168.100.1"]
+
+    * `:transports` - configuration for the channel transport. Check the
+      transport modules for transport specific options. A list of allowed
+      origins can be specified in the `:origins` key to restrict clients
+      based on the given Origin header.
+
+          [origins: ["//example.com", "http://example.com",
+                     "https://example.com:8080"]]
+
+      If no such header is sent no verification will be performed. If the
+      Origin header does not match the list of allowed origins a 403 Forbidden
+      response will be sent to the client.
 
   ## Endpoint API
 
   In the previous section, we have used the `config/2` function which is
-  automatically generated in your Endpoint. Here is a summary of all functions
-  defined in your endpoint:
+  automatically generated in your endpoint. Here is a summary of all the
+  functions that are automatically defined in your endpoint.
+
+  #### Paths and URLs
+
+    * `url(path)` - returns the URL for this endpoint with the given path
+    * `static_path(path)` - returns the static path for a given asset
+
+  #### Channels
+
+    * `broadcast_from(from, topic, event, msg)` - proxy to `Phoenix.Channel.broadcast_from/4`
+      using this endpoint's configured pubsub server
+    * `broadcast_from!(from, topic, event, msg)` - proxies to `Phoenix.Channel.broadcast_from!/4`
+      using this endpoint's configured pubsub server
+    * `broadcast(topic, event, msg)` - proxies to `Phoenix.Channel.broadcast/3`
+      using this endpoint's configured pubsub server
+    * `broadcast!(topic, event, msg)` - proxies to `Phoenix.Channel.broadcast!/3`
+      using this endpoint's configured pubsub server
+
+  #### Endpoint configuration
 
     * `start_link()` - starts the Endpoint supervision tree, including its
       configuration cache and possibly the servers for handling requests
     * `config(key, default)` - access the endpoint configuration given by key
-    * `config_change(changed, removed)` - reload the endpoint configuration on application upgrades
-    * `url(path)` - returns the URL for this endpoint with the given path
-    * `static_path(path)` - returns the static path for a given asset
-    * `broadcast_from(from, topic, event, msg)` - proxy to `Phoenix.Channel.broadcast_from/4`
-      using this endpoint's configured pubsub server
-    * `broadcast_from!(from, topic, event, msg)` - proxy to `Phoenix.Channel.broadcast_from!/4`
-      using this endpoint's configured pubsub server
-    * `broadcast(topic, event, msg)` - proxy to `Phoenix.Channel.broadcast/3`
-      using this endpoint's configured pubsub server
-    * `broadcast!(topic, event, msg)` - proxy to `Phoenix.Channel.broadcast!/3`
-      using this endpoint's configured pubsub server
+    * `config_change(changed, removed)` - reload the endpoint configuration
+      on application upgrades
 
-
-  Besides the functions above, it defines also the API expected by Plug
-  for serving requests:
+  #### Plug API
 
     * `init(opts)` - invoked when starting the endpoint server
-    * `call(conn, opts)` - invoked on every request and it simply dispatches to
-      the defined Plug pipeline
+    * `call(conn, opts)` - invoked on every request (simply dispatches to
+      the defined plug pipeline)
 
   """
 
@@ -161,22 +211,29 @@ defmodule Phoenix.Endpoint do
 
   defp config(opts) do
     quote do
-      otp_app = unquote(opts)[:otp_app] || raise "endpoint expects :otp_app to be given"
-      config  = Adapter.config(otp_app, __MODULE__)
-      @config config
+      var!(otp_app) = unquote(opts)[:otp_app] || raise "endpoint expects :otp_app to be given"
+      var!(config)  = Adapter.config(var!(otp_app), __MODULE__)
+      var!(code_reloading?) = var!(config)[:code_reloader]
+
+      # Avoid unused variable warnings
+      _ = var!(code_reloading?)
     end
   end
 
   defp pubsub() do
     quote do
-      @pubsub_server get_in(@config, [:pubsub, :name]) ||
-        Phoenix.Naming.base_concat(__MODULE__, "PubSub")
+      @pubsub_server var!(config)[:pubsub][:name] ||
+        (if var!(config)[:pubsub][:adapter] do
+          raise ArgumentError, "an adapter was given to :pubsub but no :name was defined, " <>
+                               "please pass the :name option accordingly"
+        end)
 
       def __pubsub_server__, do: @pubsub_server
 
       def broadcast_from(from, topic, event, msg) do
         Phoenix.Channel.broadcast_from(@pubsub_server, from, topic, event, msg)
       end
+
       def broadcast_from!(from, topic, event, msg) do
         Phoenix.Channel.broadcast_from!(@pubsub_server, from, topic, event, msg)
       end
@@ -203,19 +260,21 @@ defmodule Phoenix.Endpoint do
         opts
       end
 
-      def call(conn, opts) do
+      def call(conn, _opts) do
         conn = put_in conn.secret_key_base, config(:secret_key_base)
-        conn = update_in conn.private, &Map.put(&1, :phoenix_endpoint, __MODULE__)
-        phoenix_endpoint_pipeline(conn, opts)
+        conn
+        |> Plug.Conn.put_private(:phoenix_endpoint, __MODULE__)
+        |> put_script_name()
+        |> phoenix_endpoint_pipeline()
       end
 
       defoverridable [init: 1, call: 2]
 
-      if config[:debug_errors] do
-        use Plug.Debugger, otp_app: otp_app
+      if var!(config)[:debug_errors] do
+        use Plug.Debugger, otp_app: var!(otp_app)
       end
 
-      use Phoenix.Endpoint.ErrorHandler, view: config[:render_errors]
+      use Phoenix.Endpoint.RenderErrors, var!(config)[:render_errors]
     end
   end
 
@@ -225,13 +284,13 @@ defmodule Phoenix.Endpoint do
       Starts the endpoint supervision tree.
       """
       def start_link do
-        Adapter.start_link(unquote(otp_app), __MODULE__)
+        Adapter.start_link(unquote(var!(otp_app)), __MODULE__)
       end
 
       @doc """
       Returns the endpoint configuration for `key`
 
-      Returns `default` if the router does not exist.
+      Returns `default` if the key does not exist.
       """
       def config(key, default \\ nil) do
         case :ets.lookup(__MODULE__, key) do
@@ -248,13 +307,31 @@ defmodule Phoenix.Endpoint do
       end
 
       @doc """
-      Generates a URL for the given path based on the
-      `:url` configuration for the endpoint.
+      Generates the endpoint base URL without any path information.
       """
-      def url(path) do
+      def url do
         Phoenix.Config.cache(__MODULE__,
           :__phoenix_url__,
-          &Phoenix.Endpoint.Adapter.url/1) <> path
+          &Phoenix.Endpoint.Adapter.url/1)
+      end
+
+      @doc """
+      Generates the path information including any necessary prefix.
+      """
+      script_name = var!(config)[:url][:path]
+
+      if script_name == "/" do
+        def path(path), do: path
+
+        defp put_script_name(conn) do
+          conn
+        end
+      else
+        def path(path), do: unquote(script_name) <> path
+
+        defp put_script_name(conn) do
+          update_in conn.script_name, &(&1 ++ unquote(Plug.Router.Utils.split(script_name)))
+        end
       end
 
       @doc """
@@ -272,67 +349,29 @@ defmodule Phoenix.Endpoint do
   @doc false
   defmacro __before_compile__(env) do
     plugs = Module.get_attribute(env.module, :plugs)
-    plugs = for plug <- plugs, allow_plug?(plug), do: plug
     {conn, body} = Plug.Builder.compile(plugs)
 
     quote do
-      defp phoenix_endpoint_pipeline(unquote(conn), _), do: unquote(body)
+      defp phoenix_endpoint_pipeline(unquote(conn)), do: unquote(body)
     end
   end
-
-  defp allow_plug?({Phoenix.CodeReloader, _, _}), do:
-    Application.get_env(:phoenix, :code_reloader, false)
-  defp allow_plug?(_), do:
-    true
 
   ## API
 
   @doc """
   Stores a plug to be executed as part of the pipeline.
   """
-  defmacro plug(plug, opts \\ []) do
+  defmacro plug(plug, opts \\ [])
+
+  defmacro plug(:router, router) do
     quote do
-      @plugs {unquote(plug), unquote(opts), true}
+      @plugs {unquote(router), [], true}
     end
   end
 
-  @doc """
-  A macro that can be plugged in order to handle routing errors.
-
-  By default, a Phoenix router will raise a `Phoenix.Router.NoRouteError`
-  struct in case no route is found. This macro wraps the router call so
-  the route error does not pass through.
-
-  It also wraps the router call to provide better debugger and error
-  rendering behaviour.
-
-  ## Examples
-
-      plug :router, MyApp.Router
-
-  """
-  defmacro router(conn, plug) do
-    conf = Module.get_attribute(__CALLER__.module, :config)
-
-    code =
-      if conf[:debug_errors] do
-        quote do
-          Plug.Debugger.wrap(conn, @plug_debugger, fn ->
-            plug.call(conn, plug.init([]))
-          end)
-        end
-      else
-        quote do
-          plug.call(conn, plug.init([]))
-        end
-      end
-
+  defmacro plug(plug, opts) do
     quote do
-      conn = unquote(conn)
-      plug = unquote(plug)
-      Phoenix.Endpoint.ErrorHandler.wrap(conn, @phoenix_handle_errors, fn ->
-        unquote(code)
-      end)
+      @plugs {unquote(plug), unquote(opts), true}
     end
   end
 end

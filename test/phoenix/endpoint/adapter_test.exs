@@ -13,10 +13,11 @@ defmodule Phoenix.Endpoint.AdapterTest do
     config = Adapter.config(:phoenix, AdapterApp.Endpoint)
     assert config[:otp_app] == :phoenix
     assert config[:custom] == true
-    assert config[:render_errors] == AdapterApp.ErrorView
+    assert config[:render_errors] == [view: AdapterApp.ErrorView, format: "html"]
   end
 
   defmodule HTTPSEndpoint do
+    def path(path), do: path
     def config(:https), do: [port: 443]
     def config(:url), do: [host: "example.com"]
     def config(:otp_app), do: :phoenix
@@ -24,6 +25,7 @@ defmodule Phoenix.Endpoint.AdapterTest do
   end
 
   defmodule HTTPEndpoint do
+    def path(path), do: path
     def config(:https), do: false
     def config(:http), do: [port: 80]
     def config(:url), do: [host: "example.com"]
@@ -53,16 +55,15 @@ defmodule Phoenix.Endpoint.AdapterTest do
   end
 
   test "static_path/2 returns file's path with lookup cache" do
-    assert {:cache, "/images/phoenix.png?" <> _} =
-             Adapter.static_path(HTTPEndpoint, "/images/phoenix.png")
+    assert {:cache, "/phoenix.png?" <> _} =
+             Adapter.static_path(HTTPEndpoint, "/phoenix.png")
     assert {:stale, "/images/unknown.png"} =
              Adapter.static_path(HTTPEndpoint, "/images/unknown.png")
-
   end
 
   test "static_path/2 returns file's path without lookup cache" do
-    assert {:stale, "/images/phoenix.png?" <> _} =
-             Adapter.static_path(HTTPSEndpoint, "/images/phoenix.png")
+    assert {:stale, "/phoenix.png?" <> _} =
+             Adapter.static_path(HTTPSEndpoint, "/phoenix.png")
     assert {:stale, "/images/unknown.png"} =
              Adapter.static_path(HTTPSEndpoint, "/images/unknown.png")
   end

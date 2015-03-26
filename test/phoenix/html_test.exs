@@ -2,20 +2,15 @@ defmodule Phoenix.HTMLTest do
   use ExUnit.Case, async: true
   use RouterHelper
 
+  use Phoenix.HTML
   doctest Phoenix.HTML
 
-  use Phoenix.HTML
   alias Phoenix.HTML.Safe
 
   test "html_escape/1 entities" do
     assert html_escape("foo") == {:safe, "foo"}
     assert html_escape("<foo>") == {:safe, "&lt;foo&gt;"}
     assert html_escape("\" & \'") == {:safe, "&quot; &amp; &#39;"}
-  end
-
-  test "imports controller functions" do
-    conn = conn(:get, "/") |> put_private(:phoenix_action, :hello)
-    assert action_name(conn) == :hello
   end
 
   test "Phoenix.HTML.Safe for binaries" do

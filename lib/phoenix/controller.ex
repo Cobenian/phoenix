@@ -1,5 +1,10 @@
 defmodule Phoenix.Controller do
   import Plug.Conn
+  alias Plug.Conn.AlreadySentError
+
+  require Logger
+
+  @unsent [:unset, :set]
 
   @moduledoc """
   Controllers are used to group common functionality in the same
@@ -48,7 +53,7 @@ defmodule Phoenix.Controller do
   It is also important to not confuse `Phoenix.Controller.render/3`
   with `Phoenix.View.render/3` in the long term. The former expects
   a connection and relies on content negotiation while the latter is
-  connection-agnostnic and typically invoked from your views.
+  connection-agnostic and typically invoked from your views.
 
   ## Plug pipeline
 
@@ -179,9 +184,9 @@ defmodule Phoenix.Controller do
 
   """
   def redirect(conn, opts) when is_list(opts) do
-    url = url(opts)
-    {:safe, safe} = Phoenix.HTML.html_escape(url)
-    body = "<html><body>You are being <a href=\"#{safe}\">redirected</a>.</body></html>"
+    url  = url(opts)
+    {:safe, html} = Phoenix.HTML.html_escape(url)
+    body = "<html><body>You are being <a href=\"#{html}\">redirected</a>.</body></html>"
 
     conn
     |> put_resp_header("Location", url)
@@ -204,18 +209,29 @@ defmodule Phoenix.Controller do
 
   @doc """
   Stores the view for rendering.
+
+  Raises `Plug.Conn.AlreadySentError` if the conn was already sent.
   """
   @spec put_view(Plug.Conn.t, atom) :: Plug.Conn.t
-  def put_view(conn, module) do
+  def put_view(%Plug.Conn{state: state} = conn, module) when state in @unsent do
     put_private(conn, :phoenix_view, module)
   end
 
+  def put_view(_conn, _module), do: raise AlreadySentError
+
   @doc """
   Stores the view for rendering if one was not stored yet.
+
+  Raises `Plug.Conn.AlreadySentError` if the conn was already sent.
   """
   @spec put_new_view(Plug.Conn.t, atom) :: Plug.Conn.t
-  def put_new_view(conn, module) do
+  def put_new_view(%Plug.Conn{state: state} = conn, module)
+      when state in @unsent do
     update_in conn.private, &Map.put_new(&1, :phoenix_view, module)
+  end
+
+  def put_new_view(_conn, _module) do
+    raise Plug.Conn.AlreadySentError
   end
 
   @doc """
@@ -253,19 +269,28 @@ defmodule Phoenix.Controller do
       iex> layout(conn)
       {AppView, :print}
 
+  Raises `Plug.Conn.AlreadySentError` if the conn was already sent.
   """
   @spec put_layout(Plug.Conn.t, {atom, binary} | binary | false) :: Plug.Conn.t
-  def put_layout(conn, layout)
+  def put_layout(%Plug.Conn{state: state} = conn, layout) do
+    if state in @unsent do
+      _put_layout(conn, layout)
+    else
+      raise Plug.Conn.AlreadySentError
+    end
+  end
 
-  def put_layout(conn, false) do
+  def _put_layout(conn, layout)
+
+  def _put_layout(conn, false) do
     put_private(conn, :phoenix_layout, false)
   end
 
-  def put_layout(conn, {mod, layout}) when is_atom(mod) do
+  def _put_layout(conn, {mod, layout}) when is_atom(mod) do
     put_private(conn, :phoenix_layout, {mod, layout})
   end
 
-  def put_layout(conn, layout) when is_binary(layout) or is_atom(layout) do
+  def _put_layout(conn, layout) when is_binary(layout) or is_atom(layout) do
     update_in conn.private, fn private ->
       case Map.get(private, :phoenix_layout, false) do
         {mod, _} -> Map.put(private, :phoenix_layout, {mod, layout})
@@ -276,12 +301,17 @@ defmodule Phoenix.Controller do
 
   @doc """
   Stores the layout for rendering if one was not stored yet.
+
+  Raises `Plug.Conn.AlreadySentError` if the conn was already sent.
   """
   @spec put_new_layout(Plug.Conn.t, {atom, binary} | false) :: Plug.Conn.t
-  def put_new_layout(conn, layout)
-      when tuple_size(layout) == 2
-      when layout == false do
-    update_in conn.private, &Map.put_new(&1, :phoenix_layout, layout)
+  def put_new_layout(%Plug.Conn{state: state} = conn, layout)
+      when (is_tuple(layout) and tuple_size(layout) == 2) or layout == false do
+    if state in @unsent do
+      update_in conn.private, &Map.put_new(&1, :phoenix_layout, layout)
+    else
+      raise AlreadySentError
+    end
   end
 
   @doc """
@@ -292,14 +322,20 @@ defmodule Phoenix.Controller do
       iex> layout_formats conn
       ["html"]
 
-      iex> put_layout_formats conn, ~w(html mobile)
+      iex> put_layout_formats conn, ["html", "mobile"]
       iex> layout_formats conn
       ["html", "mobile"]
 
+  Raises `Plug.Conn.AlreadySentError` if the conn was already sent.
   """
   @spec put_layout_formats(Plug.Conn.t, [String.t]) :: Plug.Conn.t
-  def put_layout_formats(conn, formats) when is_list(formats) do
+  def put_layout_formats(%Plug.Conn{state: state} = conn, formats)
+      when state in @unsent and is_list(formats) do
     put_private(conn, :phoenix_layout_formats, formats)
+  end
+
+  def put_layout_formats(_conn, _formats) do
+    raise Plug.Conn.AlreadySentError
   end
 
   @doc """
@@ -337,7 +373,7 @@ defmodule Phoenix.Controller do
   Renders the given `template` and `assigns` based on the `conn` information.
 
   Once the template is rendered, the template format is set as the response
-  content type (for example, a HTML template will set "text/html" as response
+  content type (for example, an HTML template will set "text/html" as response
   content type) and the data is sent to the client with default status of 200.
 
   ## Arguments
@@ -367,7 +403,7 @@ defmodule Phoenix.Controller do
       end
 
   The example above renders a template "show.html" from the `MyApp.UserView`
-  and set the response content type to "text/html".
+  and sets the response content type to "text/html".
 
   In many cases, you may want the template format to be set dynamically based
   on the request. To do so, you can pass the template name as an atom (without
@@ -381,11 +417,11 @@ defmodule Phoenix.Controller do
   the accepts plug before rendering. You can do so by adding the following to your
   pipeline (in the router):
 
-      plug :accepts, ~w(html)
+      plug :accepts, ["html"]
 
   ## Views
 
-  Controllers render by default templates in a view with a similar name to the
+  By default, Controllers render templates in a view with a similar name to the
   controller. For example, `MyApp.UserController` will render templates inside
   the `MyApp.UserView`. This information can be changed any time by using the
   `put_view/2` function:
@@ -459,8 +495,59 @@ defmodule Phoenix.Controller do
             raise "a view module was not specified, set one with put_view/2"
     data = Phoenix.View.render_to_iodata(view, template,
                                          Map.put(conn.assigns, :conn, conn))
-    send_resp(conn, 200, content_type, data)
+    send_resp(conn, conn.status || 200, content_type, data)
   end
+
+  @doc """
+  Scrubs the parameters from the request.
+
+  This process is two-fold:
+
+    * Checks to see if the `required_key` is present
+    * Changes empty parameters of `required_key` (recursively) to nils
+
+  This function is useful to remove empty strings sent
+  via HTML forms. If you are providing an API, there
+  is likely no need to invoke `scrub_params/2`.
+
+  If the `required_key` is not present, it will
+  raise `Phoenix.MissingParamError`.
+
+  ## Examples
+
+      iex> scrub_params(conn, "user")
+
+  """
+  @spec scrub_params(Plug.Conn.t, [String.t]) :: Plug.Conn.t
+  def scrub_params(conn, required_key) when is_binary(required_key) do
+    param = Map.get(conn.params, required_key) |> scrub_param()
+
+    unless param do
+      raise Phoenix.MissingParamError, key: required_key
+    end
+
+    params = Map.put(conn.params, required_key, param)
+    %{conn | params: params}
+  end
+
+  defp scrub_param(%{__struct__: mod} = struct) when is_atom(mod) do
+    struct
+  end
+  defp scrub_param(%{} = param) do
+    Enum.reduce(param, %{}, fn({k, v}, acc) ->
+      Map.put(acc, k, scrub_param(v))
+    end)
+  end
+  defp scrub_param(param) when is_list(param) do
+    Enum.map(param, &scrub_param/1)
+  end
+  defp scrub_param(param) do
+    if scrub?(param), do: nil, else: param
+  end
+
+  defp scrub?(" " <> rest), do: scrub?(rest)
+  defp scrub?(""), do: true
+  defp scrub?(_), do: false
 
   defp prepare_assigns(conn, assigns, format) do
     layout =
@@ -493,18 +580,51 @@ defmodule Phoenix.Controller do
   defp template_name(name, _format) when is_binary(name), do:
     name
 
-  defp send_resp(conn, default_status, content_type, body) do
+  defp send_resp(conn, default_status, default_content_type, body) do
     conn
-    |> put_resp_content_type(content_type)
+    |> ensure_resp_content_type(default_content_type)
     |> send_resp(conn.status || default_status, body)
   end
 
+  defp ensure_resp_content_type(%{resp_headers: resp_headers} = conn, content_type) do
+    if List.keyfind(resp_headers, "content-type", 0) do
+      conn
+    else
+      content_type = content_type <> "; charset=utf-8"
+      %{conn | resp_headers: [{"content-type", content_type}|resp_headers]}
+    end
+  end
+
   @doc """
-  Performs content negotiation based on the accepted formats.
+  Enables CSRF protection.
+
+  Currently used as a wrapper function for `Plug.CSRFProtection`
+  and mainly serves as a function plug in `YourApp.Router`.
+
+  Check `get_csrf_token/0` and `delete_csrf_token/0` for
+  retrieving and deleting CSRF tokens.
+  """
+  def protect_from_forgery(conn, opts \\ []) do
+    Plug.CSRFProtection.call(conn, opts)
+  end
+
+  @doc """
+  Gets the CSRF token.
+  """
+  defdelegate get_csrf_token(), to: Plug.CSRFProtection
+
+  @doc """
+  Deletes any CSRF token set.
+  """
+  defdelegate delete_csrf_token(), to: Plug.CSRFProtection
+
+  @doc """
+  Performs content negotiation based on the available formats.
 
   It receives a connection, a list of formats that the server
   is capable of rendering and then proceeds to perform content
-  negotiation based on the request information.
+  negotiation based on the request information. If the client
+  accepts any of the given formats, the request proceeds.
 
   If the request contains a "format" parameter, it is
   considered to be the format desired by the client. If no
@@ -528,10 +648,11 @@ defmodule Phoenix.Controller do
 
   `accepts/2` can be invoked as a function:
 
-      iex> accepts(conn, ~w(html json))
+      iex> accepts(conn, ["html", "json"])
 
   or used as a plug:
 
+      plug :accepts, ["html", "json"]
       plug :accepts, ~w(html json)
 
   """
@@ -545,25 +666,17 @@ defmodule Phoenix.Controller do
     end
   end
 
-  @doc """
-  Currently used as a wrapper function for Plug.CSRFProtection and mainly serves
-  as a function plug in MyApp.Router. Makes CSRFProtection more easily extensible
-  from within Phoenix.
-  """
-  def protect_from_forgery(conn, opts \\ []) do
-    Plug.CSRFProtection.call(conn, opts)
-  end
-
   defp handle_params_accept(conn, format, accepted) do
     if format in accepted do
       conn
     else
-      raise Phoenix.NotAcceptableError,
-        message: "unknown format #{inspect format}, expected one of #{inspect accepted}"
+      Logger.error "Unknown format #{inspect format} in plug :accepts, " <>
+                   "expected one of #{inspect accepted}"
+      conn |> send_resp(406, "") |> halt()
     end
   end
 
-  # In case there is no accepts header or the header is */*
+  # In case there is no accept header or the header is */*
   # we use the first format specified in the accepts list.
   defp handle_header_accept(conn, header, [first|_]) when header == [] or header == ["*/*"] do
     accept(conn, first)
@@ -631,9 +744,10 @@ defmodule Phoenix.Controller do
     put_in conn.params["format"], format
   end
 
-  defp refuse(_conn, accepted) do
-    raise Phoenix.NotAcceptableError,
-      message: "no supported media type in accept header, expected one of #{inspect accepted}"
+  defp refuse(conn, accepted) do
+    Logger.error "No supported media type in accept header in plug :accepts, " <>
+                 "expected one of #{inspect accepted}"
+    conn |> send_resp(406, "") |> halt()
   end
 
   @doc """

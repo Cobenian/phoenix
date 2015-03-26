@@ -7,7 +7,7 @@ defmodule Phoenix.Template do
   system into a particular directory, typically "web/templates".
 
   This module provides conveniences for reading all files from a
-  particular directory and embeding them into a single module.
+  particular directory and embedding them into a single module.
   Imagine you have a directory with templates:
 
       # templates/foo.html.eex
@@ -24,7 +24,7 @@ defmodule Phoenix.Template do
 
   In practice though, developers rarely use `Phoenix.Template`
   directly. Instead they use `Phoenix.View` which wraps the template
-  functionality and add some extra conveniences.
+  functionality and adds some extra conveniences.
 
   ## Terminology
 
@@ -105,16 +105,36 @@ defmodule Phoenix.Template do
 
   @doc false
   defmacro __using__(options) do
-    path = Dict.fetch! options, :root
+    root = Dict.fetch! options, :root
 
     quote do
-      @template_root Path.relative_to_cwd(unquote(path))
+      @template_root Path.relative_to_cwd(unquote(root))
       @before_compile unquote(__MODULE__)
 
       @doc """
       Renders the given template locally.
       """
       def render(template, assigns \\ %{})
+
+      def render(template, assigns) when is_list(assigns) do
+        render(template, Enum.into(assigns, %{}))
+      end
+
+      @doc """
+      Callback invoked when no template is found.
+      By default it raises but can be customized
+      to render a particular template.
+      """
+      def template_not_found(template, _assigns) do
+        {root, names} = __templates__
+        raise UndefinedError,
+          available: names,
+          template: template,
+          root: root,
+          module: __MODULE__
+      end
+
+      defoverridable [template_not_found: 2]
     end
   end
 
@@ -130,23 +150,28 @@ defmodule Phoenix.Template do
     codes = Enum.map(pairs, &elem(&1, 1))
 
     # We are using line -1 because we don't want warnings coming from
-    # render/2 to be reported in case the user has already defined a
-    # catch all render/2 clause.
+    # render/2 to be reported in case the user has defined a catch all
+    # render/2 clause.
     quote line: -1 do
       unquote(codes)
 
-      def render(template, _assign) do
-        raise UndefinedError,
-          available: unquote(names),
-          template: template,
-          root: @template_root,
-          module: __MODULE__
+      def render(template, assigns) do
+        template_not_found(template, assigns)
       end
 
       @doc """
-      Returns true whenever the list of templates change in the filesystem.
+      Returns the template root alongside all templates.
       """
-      def __phoenix_recompile__?, do: unquote(hash(root)) != Template.hash(@template_root)
+      def __templates__ do
+        {@template_root, unquote(names)}
+      end
+
+      @doc """
+      Returns true whenever the list of templates changes in the filesystem.
+      """
+      def __phoenix_recompile__? do
+        unquote(hash(root)) != Template.hash(@template_root)
+      end
     end
   end
 
@@ -280,7 +305,7 @@ defmodule Phoenix.Template do
     name   = template_path_to_name(path, root)
     defp   = String.to_atom(name)
     ext    = Path.extname(path) |> String.lstrip(?.) |> String.to_atom
-    engine = engines()[ext]
+    engine = Map.fetch!(engines(), ext)
     quoted = engine.compile(path, name)
 
     {name, quote do

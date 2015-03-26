@@ -11,17 +11,14 @@ defmodule Phoenix.View do
 
   ## Examples
 
-  Phoenix defines the main view module at /web/view.ex:
+  Phoenix defines the view template at `web/web.ex`:
 
-      defmodule YourApp.View do
-        use Phoenix.View, root: "web/templates"
-
-        # The quoted expression returned by this block is applied
-        # to this module and all other views that use this module.
-        using do
+      defmodule YourApp.Web do
+        def view do
           quote do
+            use Phoenix.View, root: "web/templates"
+
             # Import common functionality
-            import YourApp.I18n
             import YourApp.Router.Helpers
 
             # Use Phoenix.HTML to import all HTML functions (forms, tags, etc)
@@ -29,13 +26,13 @@ defmodule Phoenix.View do
           end
         end
 
-        # Functions defined here are available to all other views/templates
+        # ...
       end
 
-  We can use the main view module to define other view modules:
+  We can use the definition above to define any view in your application:
 
       defmodule YourApp.UserView do
-        use YourApp.View
+        use YourApp.Web, :view
       end
 
   Because we have defined the template root to be "web/template", `Phoenix.View`
@@ -107,7 +104,7 @@ defmodule Phoenix.View do
     * `:root` - the template root to find templates
     * `:namespace` - the namespace to consider when calculating view paths
 
-  The `:root` option is required while the `:namespace` always to the
+  The `:root` option is required while the `:namespace` defaults to the
   first nesting in the module name. For instance, both `MyApp.UserView`
   and `MyApp.Admin.UserView` have namespace `MyApp`.
 
@@ -133,66 +130,14 @@ defmodule Phoenix.View do
         end
 
       quote do
-        @view_namespace unquote(namespace)
-        @view_root unquote(root)
         import Phoenix.View
+
         use Phoenix.Template, root:
-          Path.join(@view_root,
-                    Phoenix.Template.module_to_template_root(__MODULE__, @view_namespace, "View"))
+          Path.join(unquote(root),
+                    Phoenix.Template.module_to_template_root(__MODULE__, unquote(namespace), "View"))
       end
     else
       raise "expected :root to be given as an option"
-    end
-  end
-
-  @doc """
-  Implements the `__using__/1` callback for this view.
-
-  This macro expects a block that will be executed every time
-  the current module is used, including the current module itself.
-  The block must return a quoted expression that will then be
-  injected on the using module. For example, the following code:
-
-      defmodule MyApp.View do
-        use Phoenix.View, root: "web/templates"
-
-        using do
-          quote do
-            IO.inspect __MODULE__
-          end
-        end
-      end
-
-      defmodule MyApp.UserView do
-        use MyApp.View
-      end
-
-  will print both `MyApp.View` and `MyApp.UserView` names. By using
-  `MyApp.View`, `MyApp.UserView` will automatically be made a view
-  too.
-  """
-  defmacro using(do: block) do
-    evaled = Code.eval_quoted(block, [], __CALLER__)
-    {evaled, __usable__(block)}
-  end
-
-  defp __usable__(block) do
-    quote do
-      @doc false
-      defmacro __using__(opts) do
-        opts =
-          opts
-          |> Keyword.put_new(:root, @view_root)
-          |> Keyword.put_new(:namespace, @view_namespace)
-
-        block = unquote(block)
-
-        quote do
-          use Phoenix.View, unquote(opts)
-          unquote(block)
-          import unquote(__MODULE__), except: [render: 2]
-        end
-      end
     end
   end
 
@@ -222,7 +167,7 @@ defmodule Phoenix.View do
 
   ## Layouts
 
-  Template can be rendered within other templates using the `:layout`
+  Templates can be rendered within other templates using the `:layout`
   option. `:layout` accepts a tuple of the form
   `{LayoutModule, "template.extension"}`.
 

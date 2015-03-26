@@ -5,28 +5,33 @@ defmodule Phoenix.ControllerTest do
   import Phoenix.Controller
   alias Plug.Conn
 
+  setup do
+    Logger.disable(self)
+    :ok
+  end
+
   defp get_resp_content_type(conn) do
     [header]  = get_resp_header(conn, "content-type")
     header |> String.split(";") |> Enum.fetch!(0)
   end
 
   test "action_name/1" do
-    conn = Conn.put_private(%Conn{}, :phoenix_action, :show)
+    conn = put_private(%Conn{}, :phoenix_action, :show)
     assert action_name(conn) == :show
   end
 
   test "controller_module/1" do
-    conn = Conn.put_private(%Conn{}, :phoenix_controller, Hello)
+    conn = put_private(%Conn{}, :phoenix_controller, Hello)
     assert controller_module(conn) == Hello
   end
 
   test "router_module/1" do
-    conn = Conn.put_private(%Conn{}, :phoenix_router, Hello)
+    conn = put_private(%Conn{}, :phoenix_router, Hello)
     assert router_module(conn) == Hello
   end
 
   test "endpoint_module/1" do
-    conn = Conn.put_private(%Conn{}, :phoenix_endpoint, Hello)
+    conn = put_private(%Conn{}, :phoenix_endpoint, Hello)
     assert endpoint_module(conn) == Hello
   end
 
@@ -36,6 +41,10 @@ defmodule Phoenix.ControllerTest do
 
     conn = put_layout_formats conn, ~w(json xml)
     assert layout_formats(conn) == ~w(json xml)
+
+    assert_raise Plug.Conn.AlreadySentError, fn ->
+      put_layout_formats sent_conn, ~w(json)
+    end
   end
 
   test "put_layout/2 and layout/1" do
@@ -57,6 +66,10 @@ defmodule Phoenix.ControllerTest do
     assert_raise RuntimeError, fn ->
       put_layout conn, "print"
     end
+
+    assert_raise Plug.Conn.AlreadySentError, fn ->
+      put_layout sent_conn, {AppView, :print}
+    end
   end
 
   test "put_new_layout/2" do
@@ -69,6 +82,10 @@ defmodule Phoenix.ControllerTest do
     assert layout(conn) == {AppView, "application.html"}
     conn = put_new_layout(conn, false)
     assert layout(conn) == {AppView, "application.html"}
+
+    assert_raise Plug.Conn.AlreadySentError, fn ->
+      put_new_layout sent_conn, {AppView, "application.html"}
+    end
   end
 
   test "put_view/2 and put_new_view/2" do
@@ -78,6 +95,13 @@ defmodule Phoenix.ControllerTest do
     assert view_module(conn) == Hello
     conn = put_view(conn, World)
     assert view_module(conn) == World
+
+    assert_raise Plug.Conn.AlreadySentError, fn ->
+      put_new_view sent_conn, Hello
+    end
+    assert_raise Plug.Conn.AlreadySentError, fn ->
+      put_view sent_conn, Hello
+    end
   end
 
   test "json/2" do
@@ -92,6 +116,14 @@ defmodule Phoenix.ControllerTest do
     conn = json(conn, %{foo: :bar})
     assert conn.resp_body == "{\"foo\":\"bar\"}"
     assert conn.status == 400
+  end
+
+  test "json/2 allows content-type injection on connection" do
+    conn = conn(:get, "/") |> put_resp_content_type("application/vnd.api+json")
+    conn = json(conn, %{foo: :bar})
+    assert conn.resp_body == "{\"foo\":\"bar\"}"
+    assert Conn.get_resp_header(conn, "content-type") ==
+             ["application/vnd.api+json; charset=utf-8"]
   end
 
   test "text/2" do
@@ -164,11 +196,9 @@ defmodule Phoenix.ControllerTest do
     conn = accepts conn(:get, "/", format: "json"), ~w(json)
     assert conn.params["format"] == "json"
 
-    exception = assert_raise Phoenix.NotAcceptableError,
-                             ~r/unknown format "json"/, fn ->
-      accepts conn(:get, "/", format: "json"), ~w(html)
-    end
-    assert Plug.Exception.status(exception) == 406
+    conn = accepts conn(:get, "/", format: "json"), ~w(html)
+    assert conn.status == 406
+    assert conn.halted
   end
 
   test "accepts/2 uses first accepts on empty or catch-all header" do
@@ -216,16 +246,76 @@ defmodule Phoenix.ControllerTest do
     conn = accepts with_accept("text/html; q=0.7, application/json; q=0.8"), ~w(html json)
     assert conn.params["format"] == "json"
 
-    assert_raise Phoenix.NotAcceptableError, ~r/no supported media type in accept/, fn ->
-      accepts with_accept("text/html; q=0.7, application/json; q=0.8"), ~w(xml)
-    end
+    conn = accepts with_accept("text/html; q=0.7, application/json; q=0.8"), ~w(xml)
+    assert conn.halted
+    assert conn.status == 406
+  end
+
+  test "scrub_params/2 raises Phoenix.MissingParamError for missing key" do
+    assert_raise(Phoenix.MissingParamError, "expected key for \"foo\" to be present", fn ->
+      conn(:get, "/") |> fetch_params |> scrub_params("foo")
+    end)
+
+    assert_raise(Phoenix.MissingParamError, "expected key for \"foo\" to be present", fn ->
+      conn(:get, "/?foo=") |> fetch_params |> scrub_params("foo")
+    end)
+  end
+
+  test "scrub_params/2 keeps populated keys intact" do
+    conn = conn(:get, "/?foo=bar")
+    |> fetch_params
+    |> scrub_params("foo")
+
+    assert conn.params["foo"] == "bar"
+  end
+
+  test "scrub_params/2 nils out all empty values for the passed in key if it is a list" do
+    conn = conn(:get, "/?foo[]=&foo[]=++&foo[]=bar")
+    |> fetch_params
+    |> scrub_params("foo")
+
+    assert conn.params["foo"] == [nil, nil, "bar"]
+  end
+
+  test "scrub_params/2 nils out all empty keys in value for the passed in key if it is a map" do
+    conn = conn(:get, "/?foo[bar]=++&foo[baz]=&foo[bat]=ok")
+    |> fetch_params
+    |> scrub_params("foo")
+
+    assert conn.params["foo"] == %{"bar" => nil, "baz" => nil, "bat" => "ok"}
+  end
+
+  test "scrub_params/2 nils out all empty keys in value for the passed in key if it is a nested map" do
+    conn = conn(:get, "/?foo[bar][baz]=")
+    |> fetch_params
+    |> scrub_params("foo")
+
+    assert conn.params["foo"] == %{"bar" => %{"baz" => nil}}
+  end
+
+  test "scrub_params/2 ignores the keys that don't match the passed in key" do
+    conn = conn(:get, "/?foo=bar&baz=")
+    |> fetch_params
+    |> scrub_params("foo")
+
+    assert conn.params["baz"] == ""
+  end
+
+  test "scrub_params/2 keeps structs intact" do
+    conn = conn(:get, "/", %{"foo" => %{"bar" => %Plug.Upload{}}})
+    |> fetch_params
+    |> scrub_params("foo")
+
+    assert conn.params["foo"]["bar"] == %Plug.Upload{}
   end
 
   test "protect_from_forgery/2 doesn't blow up" do
     conn(:get, "/")
-    |> fetch_cookies
-    |> fetch_params
+    |> with_session
     |> protect_from_forgery([])
+
+    assert is_binary get_csrf_token
+    assert is_binary delete_csrf_token
   end
 
   test "__view__ returns the view module based on controller module" do
@@ -236,5 +326,9 @@ defmodule Phoenix.ControllerTest do
   test "__layout__ returns the layout modoule based on controller module" do
     assert Phoenix.Controller.__layout__(MyApp.UserController) == MyApp.LayoutView
     assert Phoenix.Controller.__layout__(MyApp.Admin.UserController) == MyApp.LayoutView
+  end
+
+  defp sent_conn do
+    conn(:get, "/") |> send_resp(:ok, "")
   end
 end

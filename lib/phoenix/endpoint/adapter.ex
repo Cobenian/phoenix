@@ -4,25 +4,70 @@ defmodule Phoenix.Endpoint.Adapter do
   # the adapters/handlers.
   @moduledoc false
 
+  import Supervisor.Spec
+
   @doc """
   Starts the endpoint supervision tree.
   """
   def start_link(otp_app, mod) do
-    import Supervisor.Spec
-    pub_conf = config(otp_app, mod)[:pubsub]
+    conf = config(otp_app, mod)
 
-    pubsub_children = case pub_conf[:adapter] do
-      nil     -> []
-      adapter ->
-        [supervisor(adapter, [mod.__pubsub_server__(), pub_conf[:options] || []])]
+    children =
+      config_children(mod, conf) ++
+      pubsub_children(mod, conf) ++
+      server_children(mod, conf) ++
+      watcher_children(mod, conf) ++
+      code_reloader_children(mod, conf)
+
+    Supervisor.start_link(children, strategy: :one_for_one, name: mod)
+  end
+
+  defp config_children(mod, conf) do
+    app  = conf[:otp_app]
+    args = [app, mod, defaults(app, mod), [name: Module.concat(mod, Config)]]
+    [worker(Phoenix.Config, args)]
+  end
+
+  defp pubsub_children(mod, conf) do
+    pub_conf = conf[:pubsub]
+
+    if adapter = pub_conf[:adapter] do
+      [supervisor(adapter, [mod.__pubsub_server__(), pub_conf])]
+    else
+      []
     end
+  end
 
-    children = pubsub_children ++ [
-      worker(Phoenix.Config, [otp_app, mod, defaults(otp_app, mod)]),
-      supervisor(Phoenix.Endpoint.Server, [otp_app, mod])
-    ]
+  defp server_children(mod, conf) do
+    args = [conf[:otp_app], mod, [name: Module.concat(mod, Server)]]
+    [supervisor(Phoenix.Endpoint.Server, args)]
+  end
 
-    Supervisor.start_link(children, strategy: :rest_for_one, name: mod)
+  defp watcher_children(_mod, conf) do
+    if conf[:server] do
+      Enum.map(conf[:watchers], fn {cmd, args} ->
+        worker(Phoenix.Endpoint.Watcher, [root!(conf), cmd, args],
+               id: {cmd, args}, restart: :transient)
+      end)
+    else
+      []
+    end
+  end
+
+  defp code_reloader_children(mod, conf) do
+    if conf[:code_reloader] do
+      args = [conf[:otp_app], root!(conf), conf[:reloadable_paths],
+              [name: Module.concat(mod, CodeReloader)]]
+      [worker(Phoenix.CodeReloader.Server, args)]
+    else
+      []
+    end
+  end
+
+  defp root!(conf) do
+    conf[:root] ||
+      raise "please set root: Path.expand(\"..\", __DIR__) in your endpoint " <>
+            "inside config/config.exs in order to use code reloading or watchers"
   end
 
   @doc """
@@ -36,8 +81,9 @@ defmodule Phoenix.Endpoint.Adapter do
     [otp_app: otp_app,
 
      # Compile-time config
+     code_reloader: false,
      debug_errors: false,
-     render_errors: render_errors(module),
+     render_errors: [view: render_errors(module), format: "html"],
 
      # Transports
      transports: [
@@ -59,8 +105,11 @@ defmodule Phoenix.Endpoint.Adapter do
      reloadable_paths: ["web"],
      secret_key_base: nil,
      server: Application.get_env(:phoenix, :serve_endpoints, false),
-     url: [host: "localhost"],
-     pubsub: []]
+     url: [host: "localhost", path: "/"],
+
+     # Supervisor config
+     pubsub: [],
+     watchers: []]
   end
 
   defp render_errors(module) do
@@ -103,7 +152,7 @@ defmodule Phoenix.Endpoint.Adapter do
   @doc """
   Returns the static path of a file in the static root directory.
 
-  When file exists, it includes a timestamp. When it doesn't exist,
+  When the file exists, it includes a timestamp. When it doesn't exist,
   just the static path is returned.
 
   The result is wrapped in a `{:cache | :stale, value}` tuple so
@@ -116,9 +165,9 @@ defmodule Phoenix.Endpoint.Adapter do
       {:ok, %File.Stat{type: :regular, mtime: mtime, size: size}} ->
         key = if endpoint.config(:cache_static_lookup), do: :cache, else: :stale
         vsn = {size, mtime} |> :erlang.phash2() |> Integer.to_string(16)
-        {key, path <> "?vsn=" <> vsn}
+        {key, endpoint.path(path <> "?vsn=" <> vsn)}
       _ ->
-        {:stale, path}
+        {:stale, endpoint.path(path)}
     end
   end
 
@@ -127,5 +176,6 @@ defmodule Phoenix.Endpoint.Adapter do
   end
 
   defp port_to_string({:system, env_var}), do: System.get_env(env_var)
-  defp port_to_string(port), do: to_string(port)
+  defp port_to_string(port) when is_binary(port), do: port
+  defp port_to_string(port) when is_integer(port), do: Integer.to_string(port)
 end

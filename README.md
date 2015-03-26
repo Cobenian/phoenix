@@ -1,4 +1,4 @@
-![phoenix logo](https://raw.githubusercontent.com/phoenixframework/phoenix/master/priv/static/images/phoenix.png)
+![phoenix logo](https://raw.githubusercontent.com/phoenixframework/phoenix/master/priv/static/phoenix.png)
 > Elixir Web Framework targeting full-featured, fault tolerant applications with realtime functionality
 
 [![Build Status](https://api.travis-ci.org/phoenixframework/phoenix.svg)](https://travis-ci.org/phoenixframework/phoenix)
@@ -19,7 +19,9 @@ There are no guidelines yet. Do what feels natural. Submit a bug, join a discuss
 ### Building phoenix.js
 
 ```bash
-$ 6to5 -w assets/js/phoenix.js -o priv/static/js/phoenix.js
+$ npm install
+$ npm install -g brunch
+$ brunch watch
 ```
 
 ## Contributing

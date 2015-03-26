@@ -3,7 +3,7 @@ defmodule Phoenix.Mixfile do
 
   def project do
     [app: :phoenix,
-     version: "0.9.1-dev",
+     version: "0.11.0-dev",
      elixir: "~> 1.0.2 or ~> 1.1-dev",
      deps: deps,
      package: package,
@@ -19,9 +19,8 @@ defmodule Phoenix.Mixfile do
 
   def application do
     [mod: {Phoenix, []},
-     applications: [:plug, :poison, :logger],
-     env: [code_reloader: false,
-           template_engines: [],
+     applications: [:plug, :poison, :logger, :eex],
+     env: [template_engines: [],
            format_encoders: [],
            filter_parameters: ["password"],
            serve_endpoints: false]]
@@ -29,13 +28,17 @@ defmodule Phoenix.Mixfile do
 
   defp deps do
     [{:cowboy, "~> 1.0", optional: true},
-     {:plug, github: "Cobenian/plug"}, # {:plug, "~> 0.10.0"},
+     {:plug, "~> 0.11.0"},
      {:poison, "~> 1.3"},
+     {:redo, github: "heroku/redo", optional: true},
+     {:poolboy, "~> 1.4.2", optional: true},
+
+     # Docs dependencies
      {:earmark, "~> 0.1", only: :docs},
      {:ex_doc, "~> 0.7.1", only: :docs},
      {:inch_ex, "~> 0.2", only: :docs},
-     {:eredis, github: "wooga/eredis", optional: true},
-     {:poolboy, "~> 1.4.2", optional: true},
+
+     # Test dependencies
      {:websocket_client, github: "jeremyong/websocket_client", only: :test}]
   end
 

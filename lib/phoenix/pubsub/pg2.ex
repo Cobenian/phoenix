@@ -8,11 +8,11 @@ defmodule Phoenix.PubSub.PG2 do
 
       config :my_app, MyApp.Endpiont,
         ...
-        pubsub: [adapter: Phoenix.PubSub.PG2]
+        pubsub: [name: MyApp.PubSub, adapter: Phoenix.PubSub.PG2]
 
+  ## Options
 
-
-    * `name` - The required name to register the PubSub processes, ie: `MyApp.PubSub`
+    * `:name` - The required name to register the PubSub processes, ie: `MyApp.PubSub`
 
   """
 
@@ -29,6 +29,7 @@ defmodule Phoenix.PubSub.PG2 do
       worker(Phoenix.PubSub.Local, [local_name]),
       worker(Phoenix.PubSub.PG2Server, [[name: server_name, local_name: local_name]]),
     ]
+
     supervise children, strategy: :rest_for_one
   end
 end

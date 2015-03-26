@@ -29,45 +29,65 @@ defmodule Phoenix.Router.Helpers do
       unquote(ast)
 
       @doc """
-      Generates a URL for the given path considering the connection data or
-      Endpoint provided.
+      Generates the connection/endpoint base URL without any path information.
       """
-      def url(%Conn{private: private}, path) do
-        private.phoenix_endpoint.url(path)
+      def url(%Conn{private: private}) do
+        private.phoenix_endpoint.url
       end
-      def url(endpoint, path) when is_atom(endpoint) do
-        endpoint.url(path)
+      def url(endpoint) when is_atom(endpoint) do
+        endpoint.url
       end
 
       @doc """
-      Generates path to a static asset given its file path. It expects either a
-      conn or an Endpoint.
+      Generates the path information including any necessary prefix.
       """
-      def static_path(%Conn{private: private}, path) do
-        static_path(private.phoenix_endpoint, path)
+      def path(%{script_name: []}, path) do
+        path
+      end
+
+      def path(%{script_name: [_|_] = script}, path) do
+        "/" <> Enum.join(script, "/") <> path
+      end
+
+      def path(endpoint, path) do
+        endpoint.path(path)
+      end
+
+      @doc """
+      Generates path to a static asset given its file path.
+
+      It expects either a conn or an endpoint.
+      """
+      def static_path(%Conn{private: private} = conn, path) do
+        private.phoenix_endpoint.static_path(path)
       end
       def static_path(endpoint, path) when is_atom(endpoint) do
         endpoint.static_path(path)
       end
 
       @doc """
-      Generates url to a static asset given its file path. It expects either a
-      conn or an Endpoint.
+      Generates url to a static asset given its file path.
+
+      It expects either a conn or an endpoint.
       """
-      def static_url(%Conn{private: private}, path) do
+      def static_url(%Conn{private: private} = conn, path) do
         static_url(private.phoenix_endpoint, path)
       end
       def static_url(endpoint, path) do
-        url(endpoint, static_path(endpoint, path))
+        endpoint.url <> endpoint.static_path(path)
       end
 
       # Functions used by generated helpers
 
-      defp to_path(segments, [], _reserved) do
+      defp to_param(int) when is_integer(int), do: Integer.to_string(int)
+      defp to_param(bin) when is_binary(bin), do: bin
+      defp to_param(oth), do: Phoenix.Param.to_param(oth)
+
+      defp segments(segments, [], _reserved) do
         segments
       end
 
-      defp to_path(segments, query, reserved) do
+      defp segments(segments, query, reserved) do
         dict = for {k, v} <- query,
                not (k = to_string(k)) in reserved,
                do: {k, v}
@@ -95,7 +115,7 @@ defmodule Phoenix.Router.Helpers do
     action = route.action
 
     {bins, vars} = :lists.unzip(exprs.binding)
-    segs = optimize_segments(exprs.path)
+    segs = expand_segments(exprs.path)
 
     # We are using -1 to avoid warnings in case a path has already been defined.
     quote line: -1 do
@@ -104,7 +124,7 @@ defmodule Phoenix.Router.Helpers do
       end
 
       def unquote(:"#{helper}_path")(conn_or_endpoint, unquote(action), unquote_splicing(vars), params) do
-        to_path(unquote(segs), params, unquote(bins))
+        path(conn_or_endpoint, segments(unquote(segs), params, unquote(bins)))
       end
 
       def unquote(:"#{helper}_url")(conn_or_endpoint, unquote(action), unquote_splicing(vars)) do
@@ -112,24 +132,24 @@ defmodule Phoenix.Router.Helpers do
       end
 
       def unquote(:"#{helper}_url")(conn_or_endpoint, unquote(action), unquote_splicing(vars), params) do
-        url(conn_or_endpoint, unquote(:"#{helper}_path")(conn_or_endpoint, unquote(action), unquote_splicing(vars), params))
+        url(conn_or_endpoint) <> unquote(:"#{helper}_path")(conn_or_endpoint, unquote(action), unquote_splicing(vars), params)
       end
     end
   end
 
-  defp optimize_segments([]), do: "/"
-  defp optimize_segments(segments) when is_list(segments),
-    do: optimize_segments(segments, "")
-  defp optimize_segments(segments),
+  defp expand_segments([]), do: "/"
+  defp expand_segments(segments) when is_list(segments),
+    do: expand_segments(segments, "")
+  defp expand_segments(segments),
     do: quote(do: "/" <> Enum.join(unquote(segments), "/"))
 
-  defp optimize_segments([{:|, _, [h, t]}], acc),
-    do: quote(do: unquote(optimize_segments([h], acc)) <> "/" <> Enum.join(unquote(t), "/"))
-  defp optimize_segments([h|t], acc) when is_binary(h),
-    do: optimize_segments(t, quote(do: unquote(acc) <> unquote("/" <> h)))
-  defp optimize_segments([h|t], acc),
-    do: optimize_segments(t, quote(do: unquote(acc) <> "/" <> to_string(unquote(h))))
-  defp optimize_segments([], acc),
+  defp expand_segments([{:|, _, [h, t]}], acc),
+    do: quote(do: unquote(expand_segments([h], acc)) <> "/" <> Enum.join(unquote(t), "/"))
+  defp expand_segments([h|t], acc) when is_binary(h),
+    do: expand_segments(t, quote(do: unquote(acc) <> unquote("/" <> h)))
+  defp expand_segments([h|t], acc),
+    do: expand_segments(t, quote(do: unquote(acc) <> "/" <> to_param(unquote(h))))
+  defp expand_segments([], acc),
     do: acc
 
   @doc """

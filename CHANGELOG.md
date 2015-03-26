@@ -1,10 +1,65 @@
 # Changelog
 
-## v0.9.1-dev
+## v0.11.0-dev
+
+* Javascript client backward incompatible changes
+  * The `Socket` instance no long connects automatically. You must explicitly call `connect()`
+  * `close()` has been renamed to `disconnect()`
+  * `send` has been renamed to `push` to unify client and server messaging commands
+
+* Backwards incompatible changes
+  * [Generator] `mix phoenix.gen.resource` renamed to `mix phoenix.gen.html`
+  * [Channel] `reply` has been renamed to `push` to better signify we are only push a message down the socket, not replying to a specific request
+  * [HTML] `use Phoenix.HTML` no longer imports controller functions. You must add `import Phoenix.Controller, only: [get_flash: 2]` manually to your views or your `web.ex`
+  * [Endpoint] Code reloader must now be configured in your endpoint instead of Phoenix. Therefore, upgrade your `config/dev.exs` replacing
+
+          config :phoenix, :code_reloader, true
+
+    by
+
+          config :your_app, Your.Endpoint, code_reloader: true
+
+  * [Endpoint] Live reloader is now a dependency instead of being shipped with Phoenix. Please add `{:phoenix_live_reload, "~> 0.2"}` to your dependencies
+  * [Endpoint] The `live_reload` configuration has changed to allow a `:url` option and work with `:patterns` instead of paths:
+
+        config :your_app, Your.Endpoint,
+          code_reloader: true,
+          live_reload: [
+            url: "ws://localhost:4000",
+            patterns: [~r{priv/static/.*(js|css|png|jpeg|jpg|gif)$},
+                       ~r{web/views/.*(ex)$},
+                       ~r{web/templates/.*(eex)$}]]
+
+  * [Endpoint] Code and live reloader must now be explicitly plugged in your endpoint. Wrap them inside `lib/your_app/endpoint.ex` in a `code_reloading?` block:
+
+          if code_reloading? do
+            use Phoenix.LiveReloader
+            use Phoenix.CodeReloader
+          end
 
 * Enhancements
-  [Endpiont] Runtime evaluation of `:port` configuration is now supported. When given a tuple like `{:system, "PORT"}`, the port will be referenced from `System.get_env("PORT")` at runtime as a workaround for releases where environment specific information is loaded only at compile-time.
+  * [Endpoint] Allow the default format used when rendering errors to be customized in the `render_views` configuration
+  * [HTML] Add `button/2` function to `Phoenix.HTML`
+  * [HTML] Add `textarea/3` function to `Phoenix.HTML.Form`
 
+* Bug fixes
+  * [HTML] Fix out of order hours, minutes and days in date/time select
+
+## v0.10.0 (2015-03-08)
+
+See these [`0.9.x` to `0.10.0` upgrade instructions](https://gist.github.com/chrismccord/cf51346c6636b5052885) to bring your existing apps up to speed.
+
+* Enhancements
+  * [CLI] Make `phoenix.new` in sync with `mix new` by making the project diretory optional
+  * [Controller] Add `scrub_params/2` which makes it easy to remove and prune blank string values from parameters (usually sent by forms)
+  * [Endpoint] Runtime evaluation of `:port` configuration is now supported. When given a tuple like `{:system, "PORT"}`, the port will be referenced from `System.get_env("PORT")` at runtime as a workaround for releases where environment specific information is loaded only at compile-time
+  * [HTML] Provide `tag/2`, `content_tag/2` and `content_tag/3` helpers to make tag generation easier and safer
+  * [Router] Speed up router compilation
+
+* Backwards incompatible changes
+  * [Plug] Update to Plug 0.10.0 which moves CSRF tokens from cookies back to sessions. To avoid future bumps on the road, a `get_csrf_token/0` function has been added to controllers
+  * [PubSub] Remove the option `:options` from `:pubsub`. Just define the options alongside the pubsub configuration
+  * [Pubsub] Require the `:name` option when configuring a pubsub adapter
 
 ## v0.9.0 (2015-02-12)
 
